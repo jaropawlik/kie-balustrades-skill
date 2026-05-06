@@ -1,123 +1,200 @@
-# Prompting Guide - Balustrady (edit/compose)
+# Prompting Guide - Balustrady (Nano Banana 2)
 
-Zasady budowania promptow dla generacji balustrad balkonowych z **referencyjnych zdjec uzytkownika** przez Nano Banana 2.
+Zasady budowania promptow dla generacji balustrad balkonowych przez Google Nano Banana 2 (Gemini 3 Flash Image), na podstawie:
 
-## Problem ktory rozwiazujemy
-
-Modele text-to-image gubia szczegoly konstrukcyjne przy balustradach:
-- Nieprawidlowa liczba slupkow (zamiast 6 generuje 5 lub 7)
-- Brakujace uchwyty przelotowe (rurki "wisza" w powietrzu)
-- Zmiana sceny/budynku zamiast zachowania oryginalu
-- Mieszanie metalu z drewnem gdy nie chcemy
-
-Te zasady minimalizuja te bledy. Skrypt sam buduje prompt - ten plik tlumaczy **dlaczego** prompt wyglada tak a nie inaczej.
+- Oficjalnych docs Google: https://ai.google.dev/gemini-api/docs/image-generation
+- Google Cloud Blog "Ultimate prompting guide for Nano Banana": https://cloud.google.com/blog/products/ai-machine-learning/ultimate-prompting-guide-for-nano-banana
+- Skill agentspace-so/nano-banana-edit (best practices dla edycji): https://skills.sh/agentspace-so/runcomfy-agent-skills/nano-banana-edit
+- Kie.ai API docs: https://docs.kie.ai/market/google/nanobanana2
 
 ---
 
-## Struktura promptu (KOLEJNOSC MA ZNACZENIE)
+## Kluczowa roznica vs Stable Diffusion
 
-W trybie `edit`:
+Nano Banana 2 to **NIE jest Stable Diffusion**. To model oparty na architekturze Gemini (LLM + diffusion). To zmienia zasady promptowania:
 
-```
-1. ZADANIE: "Replace the existing balcony railing in the provided image with..."
-2. SUBJECT: balustrada z dokladna liczba elementow (slownie + cyfrowo)
-3. CONNECTIONS: uchwyty przelotowe z waga (1.4)
-4. MATERIAL: kolor, faktura, wykonczenie
-5. PRESERVE: "Keep the building, facade, windows, lighting EXACTLY as in original"
-6. QUALITY: (sharp focus:1.3), positive negatives
-```
+| Technika SD | Nano Banana 2 |
+|-------------|---------------|
+| Wagi `(element:1.4)` | **NIE DZIALA** - ignorowane |
+| Negative prompt jako parametr | **BRAK** w API |
+| Tag list ("photo, woman, red dress, sharp focus") | **GORSZE** niz naturalne zdania |
+| `seed` dla powtarzalnosci | **DZIALA** (parametr Kie.ai) |
 
----
-
-## Zasada #1: Liczby zapisuj DWA RAZY
-
-| Zle | Dobrze |
-|-----|--------|
-| `balcony with 6 posts` | `exactly six (6) vertical posts` |
-| `4 rails` | `four (4) horizontal cross-rails` |
-
-**Dlaczego:** Modele lepiej rozumieja liczby zapisane slownie. Cyfra w nawiasie wzmacnia.
+**Co dziala zamiast tego:**
+- Naturalne zdania w paragrafach (jak do czlowieka)
+- Markdown sekcje dla zlozonych instrukcji (PRESERVE / CHANGE / SPECS / DO NOT)
+- CAPS LOCK + "MUST" dla krytycznych wymogow
+- Powtorzenie liczby slownie + cyfrowo
+- "Do not X" w tekscie promptu (nie jako osobny parametr)
 
 ---
 
-## Zasada #2: PRESERVE SCENE (krytyczne dla edit)
+## Zasada #1: PRESERVE-FIRST (najwazniejsza dla edit)
 
-W trybie edit najwazniejsza instrukcja:
+Z oficjalnego skilla nano-banana-edit (skills.sh):
 
+> "Lead with what to preserve, then state changes."
+
+ZLE (kolejnosc moja stara):
 ```
-"Keep the building, facade, windows, lighting and surrounding scene
-EXACTLY as in the original image - only replace the railing."
+Replace the railing with X. ... Keep the building exactly as in original.
 ```
 
-Bez tego model "ulepsza" budynek, zmienia kolor elewacji, pora dnia ucieka.
+DOBRZE (zgodnie z docs):
+```
+PRESERVE: Keep the entire building exactly as in reference - facade,
+windows, lighting, perspective.
+
+CHANGE: Replace only the balcony railing with X.
+```
+
+**Dlaczego dziala:** Model najpierw "zalocowuje" co ma zostac niezmienione, potem dopiero rozumie co zmienic. Odwrotna kolejnosc powoduje "drift" - model zmienia rzeczy ktorych nie powinien.
 
 ---
 
-## Zasada #3: Wzmocnij krytyczne elementy wagami
+## Zasada #2: Markdown sekcje dla zlozonych promptow
 
-Skladnia Nano Banana 2: `(element:1.3)` - wzmocnienie, `(element:0.7)` - oslabienie.
+Z oficjalnego skilla nano-banana-edit:
 
-**Wzmacniaj zawsze:**
-- `(through-bolt connections:1.4)` - uchwyty przelotowe
-- `(sharp focus:1.3)` - ostrosc na balustradzie
-- `(architectural detail:1.2)` - szczegolowosc
+> "Avoid compound multi-step instructions in single prompts."
 
----
-
-## Zasada #4: Negatywy semantyczne (pozytywne)
-
-Modele slabo reaguja na "no X". Opisuj POZYTYWNIE.
-
-| Zle (negacja) | Dobrze (pozytyw) |
-|---------------|------------------|
-| `no missing posts` | `every post fully visible and connected` |
-| `no broken rails` | `continuous unbroken horizontal rails` |
-| `not blurry` | `sharp focus on railing details` |
-
----
-
-## Format promptu (jak buduje go skrypt)
-
-### Tryb `edit` (1 zdjecie)
+Zamiast jednego dlugiego zdania - rozbij na sekcje:
 
 ```
-Replace the existing balcony railing in the provided image with a new
-modern balcony railing that has exactly [POSTS_WORD] ([POSTS]) vertical
-posts and [RAILS_WORD] ([RAILS]) horizontal cross-rails.
+PRESERVE FROM REFERENCE IMAGE:
+[co zachowac]
 
-Material: [COLOR_DESCRIPTION].
+CHANGE - REPLACE ONLY THE BALCONY RAILING:
+[co zmienic, ogolnie]
 
-(through-bolt connections:1.4) clearly visible at every post-to-rail
-intersection. Symmetrical post spacing, slim rectangular profile,
-complete unbroken structure.
+NEW RAILING SPECIFICATIONS:
+- post count
+- rail count
+- color/material
+- style
 
-Keep the building, facade, windows, lighting and surrounding scene
-EXACTLY as in the original image - only replace the railing.
+COUNT VERIFICATION:
+[powtorzenie liczb dla pewnosci]
 
-(sharp focus:1.3) on railing structure, every one of the [POSTS_WORD]
-posts fully visible and connected, all [RAILS_WORD] continuous unbroken
-horizontal rails, perfect alignment with balcony floor.
+DO NOT:
+- [czego nie robic]
+```
+
+Kazdy element pelni inna funkcje, model je traktuje jako osobne wymogi.
+
+---
+
+## Zasada #3: Liczby - CAPS + MUST + slownie + cyfrowo
+
+Oficjalne docs Google przyznaja:
+
+> "The model won't always follow the exact number of objects requested."
+
+Stack technik (od najwazniejszej):
+
+1. **CAPS LOCK** dla emphasis: `MUST have EXACTLY 6`
+2. **Slownie + cyfrowo:** `6 (six) vertical posts`
+3. **Negacja przeciwna liczbie:** `not 5, not 7`
+4. **Opis ukladu:** `evenly spaced from left to right`
+5. **Sekcja COUNT VERIFICATION** - powtorz na koncu
+
+Nasz prompt robi wszystkie 5:
+
+```
+The railing MUST have EXACTLY 6 (six) vertical posts, evenly spaced
+from left to right.
+
+COUNT VERIFICATION: The final image MUST contain 6 vertical posts
+(not 5, not 7) and 4 horizontal rails (not 3, not 5).
+```
+
+---
+
+## Zasada #4: Negative prompts - tylko jako tekst, w sekcji DO NOT
+
+W API nie ma `negative_prompt`. Ale dopisanie "Do not X" w tekscie dziala (potwierdzone przez Max Woolf - https://minimaxir.com/2025/11/nano-banana-prompts/).
+
+Format:
+
+```
+DO NOT:
+- Do not alter the building walls or windows.
+- Do not change lighting or shadows.
+- Do not add text, watermarks, logos or signatures.
+```
+
+**Wazne:** Google rekomenduje glownie pozytywne opisy. "Do not" uzywaj tylko dla rzeczy ktore model **mialby tendencje dodawac mimo proby zachowania** (watermarks, dodatkowe elementy dekoracyjne).
+
+---
+
+## Zasada #5: Naturalne zdania > tag list
+
+Z oficjalnego docs Google:
+
+> "A narrative, descriptive paragraph will almost always produce a better, more coherent image than a list of disconnected words."
+
+ZLE (tag list jak w SD):
+```
+balcony, 6 posts, 4 rails, anthracite steel, modern, sharp focus,
+high quality, 8k, masterpiece
+```
+
+DOBRZE (naturalne zdania):
+```
+The balcony has a modern steel railing with exactly 6 vertical posts
+and 4 horizontal cross-rails, finished in matte anthracite. The posts
+are evenly spaced and connected to the rails with clean welded joints.
+```
+
+---
+
+## Pelny template promptu (zaszyte w skripcie)
+
+### Tryb `edit` (1 zdjecie referencyjne)
+
+```
+PRESERVE FROM REFERENCE IMAGE:
+Keep the entire building EXACTLY as shown in the reference - facade,
+walls, windows, window frames, balcony slab, roof, surrounding
+environment, lighting conditions, time of day, perspective and
+camera angle. Do not modify any architectural elements other than
+the railing.
+
+CHANGE - REPLACE ONLY THE BALCONY RAILING:
+Remove the existing balcony railing and replace it with a new modern
+steel railing.
+
+NEW RAILING SPECIFICATIONS:
+- The railing MUST have EXACTLY [N] ([N_word]) vertical posts, evenly
+  spaced from left to right.
+- The railing MUST have EXACTLY [M] ([M_word]) horizontal cross-rails,
+  parallel to each other, equal spacing between them.
+- Color and material: [COLOR_DESC].
+- Style: modern minimalist, slim rectangular profile, complete and
+  unbroken structure, every post connected to every horizontal rail.
+- Mounting: posts visibly mounted to the balcony floor or balcony
+  front edge with clean metal connections.
+
+COUNT VERIFICATION: The final image MUST contain [N] vertical posts
+(not [N-1], not [N+1]) and [M] horizontal rails (not [M-1], not [M+1]).
+
+DO NOT:
+- Do not alter the building walls, windows, facade or any
+  architectural details.
+- Do not change lighting, shadows, time of day or weather.
+- Do not add any decorative elements not specified above.
+- Do not add text, watermarks, logos or signatures.
 ```
 
 ### Tryb `compose` (2+ zdjec)
 
-```
-Using the first image as the main scene (building/balcony) and additional
-images as style/material reference, create a photorealistic visualization
-where the balcony has a new railing with exactly [POSTS_WORD] ([POSTS])
-vertical posts and [RAILS_WORD] ([RAILS]) horizontal cross-rails, in
-[COLOR_DESCRIPTION].
-
-(through-bolt connections:1.4) clearly visible at every intersection.
-Match the lighting, perspective and architectural style of the main scene.
-
-(sharp focus:1.3) on railing, every one of the [POSTS_WORD] posts fully
-visible, all [RAILS_WORD] continuous unbroken horizontal rails.
-```
+Identyczna struktura, ale rozszerzona o:
+- "REFERENCE IMAGES" - wyjasnienie ktore zdjecie jest glowne, ktore sa stylem
+- "Match the lighting/perspective of the first (main) image"
 
 ---
 
-## Mapa kolorow (zaszyte w skrypcie)
+## Mapa kolorow
 
 | Nazwa | Opis dla AI |
 |-------|-------------|
@@ -130,41 +207,70 @@ visible, all [RAILS_WORD] continuous unbroken horizontal rails.
 
 ---
 
-## Parametr `--extra` (dodatkowe instrukcje)
+## Parametr `--seed` - powtarzalnosc
 
-Gdy chcesz wymusic cos specyficznego, uzyj `--extra`:
+Kie.ai API wspiera `seed` (potwierdzone w docs.kie.ai). Skrypt obsluguje przez `--seed 42`.
 
-**Przyklady:**
-- `--extra "slupki w przekroju kwadratowym 40x40mm"` - geometria
-- `--extra "metal posts with subtle vertical brushed texture"` - faktura
-- `--extra "balustrade height ~110cm above balcony floor"` - wysokosc
-- `--extra "wider spacing between outer posts and wall"` - rozstaw
+**Kiedy uzywac:**
+- Iteracja - chcesz zachowac kompozycje, zmienic tylko detal (np. kolor)
+- A/B porownania - ten sam seed, dwa rozne prompty
+- Replikacja udanego wyniku
 
-Skrypt dolaczy to na koncu promptu jako "Additional notes: ...".
+**Kiedy NIE uzywac:**
+- Generowanie wielu wariantow (chcesz roznorodnosci) - zostaw `--seed` puste, kazdy bedzie inny
+
+**Przyklad iteracji:**
+```bash
+# Pierwszy strzal - sprobuj losowy seed
+python3 scripts/kie_balustrade.py edit --posts 6 --rails 4 \
+  --image input.jpg --output v1.jpg
+
+# Wynik OK ale chce zmienic kolor - reuzywam tego samego seed-a
+# (z logu task_id z Kie.ai mozesz odczytac uzyty seed)
+python3 scripts/kie_balustrade.py edit --posts 6 --rails 4 \
+  --color czarny --seed 12345 \
+  --image input.jpg --output v2_czarny.jpg
+```
 
 ---
 
-## Co NIE dziala dobrze (i dlaczego)
+## Parametr `--extra` - dodatkowe instrukcje
 
-✗ **"Make sure there are exactly X posts"** - meta-instrukcje sa ignorowane
-✗ **"Render in 4K, professional quality"** - od tego sa parametry `--resolution`, nie prompt
-✗ **Opisywanie sceny w prompcie** - juz jest na zdjeciu referencyjnym, nie powtarzaj
-✗ **Wiele kolorow w jednym `--color`** - rob wiele wywolan, jeden kolor na raz
-✗ **Negatywy z "no/not/without"** - uzywaj zawsze pozytywnych form
+Dodawane do promptu jako sekcja `ADDITIONAL NOTES`. Format:
+
+```
+ADDITIONAL NOTES:
+[twoj tekst]
+```
+
+Przyklady:
+- `--extra "Posts are square 40x40mm cross-section"` - geometria
+- `--extra "Cross-rails are round tubes diameter 25mm"` - profil
+- `--extra "Railing height approximately 110cm"` - wysokosc
+
+Patrz [balustrade-recipes.md](balustrade-recipes.md) dla biblioteki gotowych instrukcji.
 
 ---
 
-## Checklist (skrypt to robi automatycznie, dla wiedzy)
+## Co NIE dziala (i dlaczego)
 
-Zbudowany prompt powinien miec:
+| Technika | Dlaczego nie | Co zamiast |
+|----------|--------------|------------|
+| `(through-bolt:1.4)` | Skladnia SD, Nano Banana ignoruje | CAPS + "with prominent visible bolt heads" |
+| `negative_prompt` parametr | Brak w API Kie.ai | Sekcja `DO NOT:` w tekscie |
+| Tag list `quality, 8k, masterpiece` | Google rekomenduje narracje | Naturalne zdanie |
+| `[posts:1.5]` (alternative weights) | SD only | Powtorzenie + CAPS |
+| Long compound sentences | Powoduja drift | Markdown sekcje |
 
-- [x] Instrukcja "replace railing" / "create with new railing" (akcja)
-- [x] Liczba slupkow slownie + cyfrowo
-- [x] Liczba rurek slownie + cyfrowo
-- [x] `(through-bolt connections:1.4)`
-- [x] Kolor i material balustrady
-- [x] "Keep building/scene EXACTLY as original" (tylko edit)
-- [x] `(sharp focus:1.3)` na koncu
-- [x] Pozytywne potwierdzenie kompletnosci ("every X visible, all Y unbroken")
+---
 
-Jesli budujesz prompt recznie - zachowaj te punkty.
+## Checklist promptu (skrypt to robi automatycznie)
+
+- [x] Sekcja PRESERVE FIRST (co zachowac)
+- [x] Sekcja CHANGE (co zmienic)
+- [x] SPECIFICATIONS jako bulleted list
+- [x] Liczby: CAPS + "MUST" + slownie + cyfrowo
+- [x] COUNT VERIFICATION (powtorka liczb)
+- [x] Sekcja DO NOT (negacje pozytywne)
+- [x] Bez wag `(x:1.4)` ze Stable Diffusion
+- [x] Naturalne zdania w sekcjach (nie tag-list)

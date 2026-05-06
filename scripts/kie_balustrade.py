@@ -142,22 +142,38 @@ def build_edit_instruction(posts: int, rails: int, color: str,
     color_desc = get_color_description(color)
 
     instruction = (
-        f"Replace the existing balcony railing in the provided image with a new "
-        f"modern balcony railing that has exactly {posts_word} ({posts}) vertical "
-        f"posts and {rails_word} ({rails}) horizontal cross-rails. "
-        f"Material: {color_desc}. "
-        f"(through-bolt connections:1.4) clearly visible at every post-to-rail "
-        f"intersection. Symmetrical post spacing, slim rectangular profile, "
-        f"complete unbroken structure. "
-        f"Keep the building, facade, windows, lighting and surrounding scene "
-        f"EXACTLY as in the original image - only replace the railing. "
-        f"(sharp focus:1.3) on railing structure, every one of the {posts_word} "
-        f"posts fully visible and connected, all {rails_word} continuous "
-        f"unbroken horizontal rails, perfect alignment with balcony floor."
+        f"PRESERVE FROM REFERENCE IMAGE:\n"
+        f"Keep the entire building EXACTLY as shown in the reference - facade, "
+        f"walls, windows, window frames, balcony slab, roof, surrounding "
+        f"environment, lighting conditions, time of day, perspective and "
+        f"camera angle. Do not modify any architectural elements other than "
+        f"the railing.\n\n"
+        f"CHANGE - REPLACE ONLY THE BALCONY RAILING:\n"
+        f"Remove the existing balcony railing and replace it with a new modern "
+        f"steel railing.\n\n"
+        f"NEW RAILING SPECIFICATIONS:\n"
+        f"- The railing MUST have EXACTLY {posts} ({posts_word}) vertical posts, "
+        f"evenly spaced from left to right.\n"
+        f"- The railing MUST have EXACTLY {rails} ({rails_word}) horizontal "
+        f"cross-rails, parallel to each other, equal spacing between them.\n"
+        f"- Color and material: {color_desc}.\n"
+        f"- Style: modern minimalist, slim rectangular profile, complete and "
+        f"unbroken structure, every post connected to every horizontal rail.\n"
+        f"- Mounting: posts visibly mounted to the balcony floor or balcony "
+        f"front edge with clean metal connections.\n\n"
+        f"COUNT VERIFICATION: The final image MUST contain {posts} vertical "
+        f"posts (not {posts - 1}, not {posts + 1}) and {rails} horizontal "
+        f"rails (not {rails - 1}, not {rails + 1}).\n\n"
+        f"DO NOT:\n"
+        f"- Do not alter the building walls, windows, facade or any "
+        f"architectural details.\n"
+        f"- Do not change lighting, shadows, time of day or weather.\n"
+        f"- Do not add any decorative elements not specified above.\n"
+        f"- Do not add text, watermarks, logos or signatures."
     )
 
     if extra:
-        instruction += f" Additional notes: {extra}"
+        instruction += f"\n\nADDITIONAL NOTES:\n{extra}"
 
     return instruction
 
@@ -169,35 +185,57 @@ def build_compose_instruction(posts: int, rails: int, color: str,
     color_desc = get_color_description(color)
 
     instruction = (
-        f"Using the first image as the main scene (building/balcony) and "
-        f"additional images as style/material reference, create a photorealistic "
-        f"visualization where the balcony has a new railing with exactly "
-        f"{posts_word} ({posts}) vertical posts and {rails_word} ({rails}) "
-        f"horizontal cross-rails, in {color_desc}. "
-        f"(through-bolt connections:1.4) clearly visible at every intersection. "
-        f"Match the lighting, perspective and architectural style of the main scene. "
-        f"(sharp focus:1.3) on railing, every one of the {posts_word} posts fully "
-        f"visible, all {rails_word} continuous unbroken horizontal rails."
+        f"REFERENCE IMAGES:\n"
+        f"The first image is the main scene (building with balcony). "
+        f"Additional images are style/material references for the railing.\n\n"
+        f"PRESERVE FROM FIRST IMAGE:\n"
+        f"Keep the entire building EXACTLY as shown in the first image - facade, "
+        f"walls, windows, balcony slab, roof, lighting and perspective. Do not "
+        f"modify any architectural elements other than the railing.\n\n"
+        f"CHANGE - INSTALL NEW BALCONY RAILING:\n"
+        f"Place a new modern steel railing on the balcony of the first image, "
+        f"styled according to the additional reference images.\n\n"
+        f"NEW RAILING SPECIFICATIONS:\n"
+        f"- The railing MUST have EXACTLY {posts} ({posts_word}) vertical posts, "
+        f"evenly spaced.\n"
+        f"- The railing MUST have EXACTLY {rails} ({rails_word}) horizontal "
+        f"cross-rails, parallel, equal spacing.\n"
+        f"- Color and material: {color_desc}.\n"
+        f"- Style: modern minimalist, slim rectangular profile, complete and "
+        f"unbroken structure, every post connected to every rail.\n\n"
+        f"COUNT VERIFICATION: The final image MUST contain {posts} vertical "
+        f"posts and {rails} horizontal rails.\n\n"
+        f"Match the lighting, perspective and architectural style of the first "
+        f"(main) image.\n\n"
+        f"DO NOT:\n"
+        f"- Do not alter the building, walls, windows or any architectural "
+        f"details from the first image.\n"
+        f"- Do not change lighting or perspective.\n"
+        f"- Do not add text, watermarks, logos or signatures."
     )
 
     if extra:
-        instruction += f" Additional notes: {extra}"
+        instruction += f"\n\nADDITIONAL NOTES:\n{extra}"
 
     return instruction
 
 
 def create_task(prompt: str, image_urls: list, ratio: str, resolution: str,
-                output_format: str) -> str:
+                output_format: str, seed: int = None) -> str:
+    input_data = {
+        "prompt": prompt,
+        "image_input": image_urls,
+        "aspect_ratio": ratio,
+        "google_search": False,
+        "resolution": resolution,
+        "output_format": output_format,
+    }
+    if seed is not None:
+        input_data["seed"] = seed
+
     payload = {
         "model": "nano-banana-2",
-        "input": {
-            "prompt": prompt,
-            "image_input": image_urls,
-            "aspect_ratio": ratio,
-            "google_search": False,
-            "resolution": resolution,
-            "output_format": output_format,
-        },
+        "input": input_data,
     }
 
     response = requests.post(
@@ -262,13 +300,16 @@ def download_image(url: str, output_path: str):
 
 
 def run_generation(prompt: str, image_urls: list, output: str, ratio: str,
-                   resolution: str, fmt: str, label: str = ""):
+                   resolution: str, fmt: str, label: str = "",
+                   seed: int = None):
     print(f"\n=== {label} ===" if label else "")
     print(f"  Output: {output}")
     print(f"  Ratio: {ratio} | Resolution: {resolution} | Format: {fmt}")
     print(f"  Reference images: {len(image_urls)}")
+    if seed is not None:
+        print(f"  Seed: {seed}")
 
-    task_id = create_task(prompt, image_urls, ratio, resolution, fmt)
+    task_id = create_task(prompt, image_urls, ratio, resolution, fmt, seed)
     print(f"  Task ID: {task_id}")
 
     result = poll_task(task_id)
@@ -301,6 +342,7 @@ def cmd_edit(args):
         resolution=args.resolution,
         fmt=args.format,
         label=f"Edit: {args.posts}x{args.rails} ({args.color})",
+        seed=args.seed,
     )
 
 
@@ -323,6 +365,7 @@ def cmd_compose(args):
         resolution=args.resolution,
         fmt=args.format,
         label=f"Compose: {args.posts}x{args.rails} ({args.color}, {len(image_urls)} ref images)",
+        seed=args.seed,
     )
 
 
@@ -376,6 +419,7 @@ def cmd_batch(args):
                     resolution=args.resolution,
                     fmt=args.format,
                     label=f"{posts}x{rails} ({args.color})",
+                    seed=args.seed,
                 )
             except Exception as e:
                 print(f"  BLAD: {e}")
@@ -390,12 +434,6 @@ def cmd_batch(args):
 
 
 def main():
-    if not KIE_API_KEY:
-        print("Error: KIE_API_KEY nie jest ustawiony.")
-        print(f"Utworz plik .env w: {SKILL_DIR}")
-        print("Skopiuj .env.example do .env i wstaw swoj klucz z https://kie.ai")
-        sys.exit(1)
-
     parser = argparse.ArgumentParser(description="Kie.ai Balustrade Generator")
     sub = parser.add_subparsers(dest="mode", required=True)
 
@@ -405,6 +443,7 @@ def main():
         ("--ratio", {"default": "auto", "choices": ASPECT_RATIOS, "help": "Proporcje (default: auto - dopasowane do zdjecia)"}),
         ("--resolution", {"default": "2K", "choices": RESOLUTIONS, "help": "Rozdzielczosc (default: 2K)"}),
         ("--format", {"default": "jpg", "choices": FORMATS, "help": "Format pliku (default: jpg)"}),
+        ("--seed", {"type": int, "default": None, "help": "Seed dla powtarzalnosci (np. 42). Brak = losowy."}),
     ]
 
     edit = sub.add_parser("edit", help="1 zdjecie + balustrada wg parametrow")
@@ -434,6 +473,12 @@ def main():
         batch.add_argument(name, **kwargs)
 
     args = parser.parse_args()
+
+    if not KIE_API_KEY:
+        print("Error: KIE_API_KEY nie jest ustawiony.")
+        print(f"Utworz plik .env w: {SKILL_DIR}")
+        print("Skopiuj .env.example do .env i wstaw swoj klucz z https://kie.ai")
+        sys.exit(1)
 
     if args.mode == "edit":
         cmd_edit(args)
