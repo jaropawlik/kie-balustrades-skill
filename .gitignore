@@ -1,0 +1,11 @@
+.env
+output/
+*.jpg
+*.jpeg
+*.png
+*.webp
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
+venv/
