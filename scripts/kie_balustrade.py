@@ -40,9 +40,12 @@ from dotenv import load_dotenv
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPT_DIR.parent
 ENV_FILE = SKILL_DIR / ".env"
+GLOBAL_ENV_FILE = Path.home() / ".claude" / ".env"
 
 if ENV_FILE.exists():
     load_dotenv(ENV_FILE)
+elif GLOBAL_ENV_FILE.exists():
+    load_dotenv(GLOBAL_ENV_FILE)
 else:
     load_dotenv()
 
