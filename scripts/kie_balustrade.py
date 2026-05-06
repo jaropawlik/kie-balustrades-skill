@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 """
-Kie.ai Balustrade Generator - Nano Banana 2
+Kie.ai Product Visualizer - Nano Banana Pro / 2
 
-Skrypt do generowania wizualizacji balustrad balkonowych z referencyjnych zdjec.
-Czyta KIE_API_KEY i S3 credentials z pliku .env w katalogu skilla.
+Generyczny edytor zdjec produktowych (balustrady, porecze, klamki, ogrodzenia
+i inne produkty z branzy najdek.pl). Bierze zdjecie referencyjne + krotki opis
+zmiany i zwraca wizualizacje.
 
 Tryby:
-    edit    - 1 zdjecie referencyjne + instrukcja -> wizualizacja balustrady
-    compose - 2+ zdjec referencyjnych (np. budynek + balustrada) -> kompozycja
-    batch   - wiele wariantow (slupkow x rurek) z tym samym zdjeciem
+    edit    - 1 zdjecie + prompt
+    compose - 2+ zdjec (pierwsze = scena, kolejne = referencje stylu) + prompt
+    batch   - wiele promptow na tym samym zdjeciu/zdjeciach
 
 Usage:
-    # Edit z 1 zdjecia
-    python3 kie_balustrade.py edit --posts 6 --rails 4 \\
+    python3 kie_balustrade.py edit --prompt "zmniejsz liczbe poprzecznych rurek z 4 do 3" \\
         --image input.jpg --output out.jpg
 
-    # Compose z 2+ zdjec
-    python3 kie_balustrade.py compose --posts 6 --rails 4 \\
-        --image building.jpg --image railing-ref.jpg --output out.jpg
+    python3 kie_balustrade.py compose --prompt "zamontuj te porecz na tej scianie" \\
+        --image scena.jpg --image porecz-ref.jpg --output out.jpg
 
-    # Batch - wiele wariantow z tego samego zdjecia
-    python3 kie_balustrade.py batch --posts 5,6,7 --rails 3,4,5 \\
+    python3 kie_balustrade.py batch --prompt "kolor czarny" --prompt "kolor bialy" \\
         --image input.jpg --output-dir output/
 """
 
@@ -62,20 +60,7 @@ S3_PUBLIC_URL = os.environ.get("S3_PUBLIC_URL")
 ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "auto"]
 RESOLUTIONS = ["1K", "2K", "4K"]
 FORMATS = ["jpg", "png"]
-
-NUMBER_WORDS = {
-    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
-    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
-    11: "eleven", 12: "twelve",
-}
-
-COLOR_DESCRIPTIONS = {
-    "antracyt": "anthracite powder-coated steel, matte finish (RAL 7016)",
-    "czarny": "jet black painted steel, satin finish",
-    "bialy": "pure white powder-coated steel, matte finish (RAL 9016)",
-    "srebrny": "brushed stainless steel, satin metallic finish",
-    "rdzawy": "corten steel with weathered rust patina, warm orange-brown",
-}
+MODELS = ["nano-banana-pro", "nano-banana-2"]
 
 
 def check_s3_config():
@@ -128,103 +113,21 @@ def upload_to_s3(local_path: str) -> str:
     return url
 
 
-def number_to_words(n: int) -> str:
-    return NUMBER_WORDS.get(n, str(n))
+def build_edit_prompt(user_prompt: str) -> str:
+    return f"{user_prompt.strip()} Keep the rest of the photo unchanged."
 
 
-def get_color_description(color: str) -> str:
-    if color.startswith("#") and len(color) == 7:
-        return f"custom color {color} painted steel, matte finish"
-    return COLOR_DESCRIPTIONS.get(color, COLOR_DESCRIPTIONS["antracyt"])
-
-
-def build_edit_instruction(posts: int, rails: int, color: str,
-                           extra: str = None) -> str:
-    posts_word = number_to_words(posts)
-    rails_word = number_to_words(rails)
-    color_desc = get_color_description(color)
-
-    instruction = (
-        f"PRESERVE FROM REFERENCE IMAGE:\n"
-        f"Keep the entire building EXACTLY as shown in the reference - facade, "
-        f"walls, windows, window frames, balcony slab, roof, surrounding "
-        f"environment, lighting conditions, time of day, perspective and "
-        f"camera angle. Do not modify any architectural elements other than "
-        f"the railing.\n\n"
-        f"CHANGE - REPLACE ONLY THE BALCONY RAILING:\n"
-        f"Remove the existing balcony railing and replace it with a new modern "
-        f"steel railing.\n\n"
-        f"NEW RAILING SPECIFICATIONS:\n"
-        f"- The railing MUST have EXACTLY {posts} ({posts_word}) vertical posts, "
-        f"evenly spaced from left to right.\n"
-        f"- The railing MUST have EXACTLY {rails} ({rails_word}) horizontal "
-        f"cross-rails, parallel to each other, equal spacing between them.\n"
-        f"- Color and material: {color_desc}.\n"
-        f"- Style: modern minimalist, slim rectangular profile, complete and "
-        f"unbroken structure, every post connected to every horizontal rail.\n"
-        f"- Mounting: posts visibly mounted to the balcony floor or balcony "
-        f"front edge with clean metal connections.\n\n"
-        f"COUNT VERIFICATION: The final image MUST contain {posts} vertical "
-        f"posts (not {posts - 1}, not {posts + 1}) and {rails} horizontal "
-        f"rails (not {rails - 1}, not {rails + 1}).\n\n"
-        f"DO NOT:\n"
-        f"- Do not alter the building walls, windows, facade or any "
-        f"architectural details.\n"
-        f"- Do not change lighting, shadows, time of day or weather.\n"
-        f"- Do not add any decorative elements not specified above.\n"
-        f"- Do not add text, watermarks, logos or signatures."
+def build_compose_prompt(user_prompt: str) -> str:
+    return (
+        f"Use the first image as the scene. "
+        f"Use the additional images as visual references. "
+        f"{user_prompt.strip()} "
+        f"Keep the first image's scene unchanged."
     )
-
-    if extra:
-        instruction += f"\n\nADDITIONAL NOTES:\n{extra}"
-
-    return instruction
-
-
-def build_compose_instruction(posts: int, rails: int, color: str,
-                              extra: str = None) -> str:
-    posts_word = number_to_words(posts)
-    rails_word = number_to_words(rails)
-    color_desc = get_color_description(color)
-
-    instruction = (
-        f"REFERENCE IMAGES:\n"
-        f"The first image is the main scene (building with balcony). "
-        f"Additional images are style/material references for the railing.\n\n"
-        f"PRESERVE FROM FIRST IMAGE:\n"
-        f"Keep the entire building EXACTLY as shown in the first image - facade, "
-        f"walls, windows, balcony slab, roof, lighting and perspective. Do not "
-        f"modify any architectural elements other than the railing.\n\n"
-        f"CHANGE - INSTALL NEW BALCONY RAILING:\n"
-        f"Place a new modern steel railing on the balcony of the first image, "
-        f"styled according to the additional reference images.\n\n"
-        f"NEW RAILING SPECIFICATIONS:\n"
-        f"- The railing MUST have EXACTLY {posts} ({posts_word}) vertical posts, "
-        f"evenly spaced.\n"
-        f"- The railing MUST have EXACTLY {rails} ({rails_word}) horizontal "
-        f"cross-rails, parallel, equal spacing.\n"
-        f"- Color and material: {color_desc}.\n"
-        f"- Style: modern minimalist, slim rectangular profile, complete and "
-        f"unbroken structure, every post connected to every rail.\n\n"
-        f"COUNT VERIFICATION: The final image MUST contain {posts} vertical "
-        f"posts and {rails} horizontal rails.\n\n"
-        f"Match the lighting, perspective and architectural style of the first "
-        f"(main) image.\n\n"
-        f"DO NOT:\n"
-        f"- Do not alter the building, walls, windows or any architectural "
-        f"details from the first image.\n"
-        f"- Do not change lighting or perspective.\n"
-        f"- Do not add text, watermarks, logos or signatures."
-    )
-
-    if extra:
-        instruction += f"\n\nADDITIONAL NOTES:\n{extra}"
-
-    return instruction
 
 
 def create_task(prompt: str, image_urls: list, ratio: str, resolution: str,
-                output_format: str, seed: int = None) -> str:
+                output_format: str, model: str, seed: int = None) -> str:
     input_data = {
         "prompt": prompt,
         "image_input": image_urls,
@@ -237,7 +140,7 @@ def create_task(prompt: str, image_urls: list, ratio: str, resolution: str,
         input_data["seed"] = seed
 
     payload = {
-        "model": "nano-banana-2",
+        "model": model,
         "input": input_data,
     }
 
@@ -303,16 +206,18 @@ def download_image(url: str, output_path: str):
 
 
 def run_generation(prompt: str, image_urls: list, output: str, ratio: str,
-                   resolution: str, fmt: str, label: str = "",
+                   resolution: str, fmt: str, model: str, label: str = "",
                    seed: int = None):
-    print(f"\n=== {label} ===" if label else "")
+    if label:
+        print(f"\n=== {label} ===")
     print(f"  Output: {output}")
-    print(f"  Ratio: {ratio} | Resolution: {resolution} | Format: {fmt}")
+    print(f"  Model: {model} | Ratio: {ratio} | Resolution: {resolution} | Format: {fmt}")
     print(f"  Reference images: {len(image_urls)}")
+    print(f"  Prompt: {prompt}")
     if seed is not None:
         print(f"  Seed: {seed}")
 
-    task_id = create_task(prompt, image_urls, ratio, resolution, fmt, seed)
+    task_id = create_task(prompt, image_urls, ratio, resolution, fmt, model, seed)
     print(f"  Task ID: {task_id}")
 
     result = poll_task(task_id)
@@ -324,27 +229,22 @@ def run_generation(prompt: str, image_urls: list, output: str, ratio: str,
     print(f"  Zapisano: {output}")
 
 
-def parse_int_list(value: str) -> list:
-    return [int(x.strip()) for x in value.split(",") if x.strip()]
-
-
 def cmd_edit(args):
     if not os.path.exists(args.image):
         raise Exception(f"Nie znaleziono pliku: {args.image}")
 
     image_url = upload_to_s3(args.image)
-    instruction = build_edit_instruction(
-        args.posts, args.rails, args.color, args.extra,
-    )
+    prompt = build_edit_prompt(args.prompt)
 
     run_generation(
-        prompt=instruction,
+        prompt=prompt,
         image_urls=[image_url],
         output=args.output,
         ratio=args.ratio,
         resolution=args.resolution,
         fmt=args.format,
-        label=f"Edit: {args.posts}x{args.rails} ({args.color})",
+        model=args.model,
+        label="Edit",
         seed=args.seed,
     )
 
@@ -356,32 +256,36 @@ def cmd_compose(args):
             raise Exception(f"Nie znaleziono pliku: {img_path}")
         image_urls.append(upload_to_s3(img_path))
 
-    instruction = build_compose_instruction(
-        args.posts, args.rails, args.color, args.extra,
-    )
+    prompt = build_compose_prompt(args.prompt)
 
     run_generation(
-        prompt=instruction,
+        prompt=prompt,
         image_urls=image_urls,
         output=args.output,
         ratio=args.ratio,
         resolution=args.resolution,
         fmt=args.format,
-        label=f"Compose: {args.posts}x{args.rails} ({args.color}, {len(image_urls)} ref images)",
+        model=args.model,
+        label=f"Compose ({len(image_urls)} ref images)",
         seed=args.seed,
     )
 
 
 def cmd_batch(args):
-    posts_list = parse_int_list(args.posts)
-    rails_list = parse_int_list(args.rails)
+    prompts = list(args.prompts) if args.prompts else []
+    if args.prompts_file:
+        with open(args.prompts_file, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    prompts.append(line)
 
-    if not posts_list or not rails_list:
-        raise Exception("--posts i --rails musza zawierac co najmniej jedna wartosc")
+    if not prompts:
+        raise Exception("Batch wymaga --prompt (mozna wielokrotnie) lub --prompts-file")
 
-    image_paths = args.images if args.images else ([args.image] if args.image else [])
+    image_paths = args.images or []
     if not image_paths:
-        raise Exception("Batch wymaga --image (1 zdjecie) lub --image kilka razy (compose)")
+        raise Exception("Batch wymaga --image (1 = edit, 2+ = compose)")
 
     for img_path in image_paths:
         if not os.path.exists(img_path):
@@ -394,84 +298,75 @@ def cmd_batch(args):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    total = len(posts_list) * len(rails_list)
-    done = 0
+    is_compose = len(image_urls) > 1
     failed = []
 
-    print(f"\nBatch: {total} wariantow ({len(posts_list)} slupkow x {len(rails_list)} rurek)")
+    print(f"\nBatch: {len(prompts)} promptow")
     print(f"Output dir: {output_dir.resolve()}\n")
 
-    is_compose = len(image_urls) > 1
-
-    for posts in posts_list:
-        for rails in rails_list:
-            done += 1
-            output_file = output_dir / f"balustrada_{posts}x{rails}_{args.color}_{timestamp}.{args.format}"
-            print(f"\n[{done}/{total}]")
-            try:
-                if is_compose:
-                    instruction = build_compose_instruction(posts, rails, args.color, args.extra)
-                else:
-                    instruction = build_edit_instruction(posts, rails, args.color, args.extra)
-
-                run_generation(
-                    prompt=instruction,
-                    image_urls=image_urls,
-                    output=str(output_file),
-                    ratio=args.ratio,
-                    resolution=args.resolution,
-                    fmt=args.format,
-                    label=f"{posts}x{rails} ({args.color})",
-                    seed=args.seed,
-                )
-            except Exception as e:
-                print(f"  BLAD: {e}")
-                failed.append((posts, rails, str(e)))
+    for idx, user_prompt in enumerate(prompts, start=1):
+        output_file = output_dir / f"variant_{idx:02d}_{timestamp}.{args.format}"
+        print(f"\n[{idx}/{len(prompts)}]")
+        try:
+            prompt = (build_compose_prompt(user_prompt)
+                      if is_compose else build_edit_prompt(user_prompt))
+            run_generation(
+                prompt=prompt,
+                image_urls=image_urls,
+                output=str(output_file),
+                ratio=args.ratio,
+                resolution=args.resolution,
+                fmt=args.format,
+                model=args.model,
+                label=f"Variant {idx}: {user_prompt[:60]}",
+                seed=args.seed,
+            )
+        except Exception as e:
+            print(f"  BLAD: {e}")
+            failed.append((idx, user_prompt, str(e)))
 
     print(f"\n=== Gotowe ===")
-    print(f"Sukces: {total - len(failed)}/{total}")
+    print(f"Sukces: {len(prompts) - len(failed)}/{len(prompts)}")
     if failed:
         print(f"Bledy:")
-        for posts, rails, err in failed:
-            print(f"  - {posts}x{rails}: {err}")
+        for idx, prompt, err in failed:
+            print(f"  - [{idx}] {prompt[:60]}: {err}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Kie.ai Balustrade Generator")
+    parser = argparse.ArgumentParser(description="Kie.ai Product Visualizer (Nano Banana Pro / 2)")
     sub = parser.add_subparsers(dest="mode", required=True)
 
     common_args = [
-        ("--color", {"default": "antracyt", "help": "Kolor (antracyt/czarny/bialy/srebrny/rdzawy lub #XXXXXX)"}),
-        ("--extra", {"default": None, "help": "Dodatkowe instrukcje dla AI"}),
-        ("--ratio", {"default": "auto", "choices": ASPECT_RATIOS, "help": "Proporcje (default: auto - dopasowane do zdjecia)"}),
+        ("--model", {"default": "nano-banana-pro", "choices": MODELS, "help": "Model AI (default: nano-banana-pro - lepsza jakosc, drozszy)"}),
+        ("--ratio", {"default": "auto", "choices": ASPECT_RATIOS, "help": "Proporcje (default: auto)"}),
         ("--resolution", {"default": "2K", "choices": RESOLUTIONS, "help": "Rozdzielczosc (default: 2K)"}),
         ("--format", {"default": "jpg", "choices": FORMATS, "help": "Format pliku (default: jpg)"}),
-        ("--seed", {"type": int, "default": None, "help": "Seed dla powtarzalnosci (np. 42). Brak = losowy."}),
+        ("--seed", {"type": int, "default": None, "help": "Seed dla powtarzalnosci. Brak = losowy."}),
     ]
 
-    edit = sub.add_parser("edit", help="1 zdjecie + balustrada wg parametrow")
-    edit.add_argument("--posts", type=int, required=True, help="Liczba slupkow")
-    edit.add_argument("--rails", type=int, required=True, help="Liczba rurek poprzecznych")
+    edit = sub.add_parser("edit", help="1 zdjecie + prompt")
+    edit.add_argument("--prompt", required=True, help="Krotki opis zmiany (po polsku lub angielsku)")
     edit.add_argument("--image", required=True, help="Sciezka do zdjecia referencyjnego")
     edit.add_argument("--output", required=True, help="Sciezka pliku wyjsciowego")
     for name, kwargs in common_args:
         edit.add_argument(name, **kwargs)
 
-    compose = sub.add_parser("compose", help="2+ zdjec (np. budynek + referencja balustrady)")
-    compose.add_argument("--posts", type=int, required=True)
-    compose.add_argument("--rails", type=int, required=True)
+    compose = sub.add_parser("compose", help="2+ zdjec (1. = scena, kolejne = referencje)")
+    compose.add_argument("--prompt", required=True, help="Krotki opis tego co chcemy zrobic")
     compose.add_argument("--image", action="append", dest="images", required=True,
-                         help="Zdjecia (uzyj wielokrotnie: --image a.jpg --image b.jpg)")
+                         help="Zdjecia (uzyj wielokrotnie: --image scena.jpg --image ref.jpg)")
     compose.add_argument("--output", required=True)
     for name, kwargs in common_args:
         compose.add_argument(name, **kwargs)
 
-    batch = sub.add_parser("batch", help="Wiele wariantow z tego samego zdjecia/zdjec")
-    batch.add_argument("--posts", required=True, help="Lista slupkow (np. 5,6,7)")
-    batch.add_argument("--rails", required=True, help="Lista rurek (np. 3,4,5)")
-    batch.add_argument("--image", action="append", dest="images",
-                       help="Zdjecia (1 = edit, 2+ = compose, mozna uzyc wielokrotnie)")
-    batch.add_argument("--output-dir", required=True, help="Katalog wyjsciowy")
+    batch = sub.add_parser("batch", help="Wiele promptow na tym samym zdjeciu/zdjeciach")
+    batch.add_argument("--prompt", action="append", dest="prompts", default=[],
+                       help="Prompt (mozna podac wielokrotnie)")
+    batch.add_argument("--prompts-file", help="Plik tekstowy: 1 prompt per linia")
+    batch.add_argument("--image", action="append", dest="images", required=True,
+                       help="Zdjecia (1 = edit, 2+ = compose)")
+    batch.add_argument("--output-dir", required=True)
     for name, kwargs in common_args:
         batch.add_argument(name, **kwargs)
 
@@ -488,8 +383,6 @@ def main():
     elif args.mode == "compose":
         cmd_compose(args)
     elif args.mode == "batch":
-        if not hasattr(args, 'image'):
-            args.image = None
         cmd_batch(args)
 
 

@@ -1,125 +1,128 @@
 ---
 name: kie-balustrades
-description: Generuje wizualizacje balustrad balkonowych przez Kie.ai (Nano Banana 2) na bazie zdjec referencyjnych. Parametryzuje liczbe slupkow, liczbe rurek poprzecznych i kolor. Obsluguje pojedyncze zdjecie (edit), wiele zdjec referencyjnych (compose) i batch (wszystkie warianty na raz). Zdjecia uploadowane przez wlasne S3/MinIO uzytkownika.
+description: Generuje wizualizacje produktow z branzy slusarsko-stalowej (balustrady, porecze, klamki, ogrodzenia, bramy - cala oferta najdek.pl) przez Kie.ai (Nano Banana 2). Bierze zdjecie referencyjne + krotki opis zmiany w naturalnym jezyku i zwraca edytowane zdjecie. Obsluguje pojedyncze zdjecie (edit), wiele zdjec referencyjnych (compose) i batch (wiele wariantow). Zdjecia uploadowane przez wlasne S3/MinIO uzytkownika.
 allowed-tools: ["Bash", "Read", "Write", "Glob"]
 ---
 
 # Kie Balustrades Skill
 
-Skill do generowania wizualizacji balustrad balkonowych z **wlasnych zdjec referencyjnych** (budynek/elewacja) - dedykowany pod Allegro/aukcje/oferty produktowe.
+Skill do generowania wizualizacji produktow z branzy slusarsko-stalowej (balustrady, porecze, klamki, ogrodzenia, bramy itd.) na bazie **wlasnych zdjec referencyjnych** klienta - dedykowany pod Allegro/aukcje/oferty produktowe.
+
+## Filozofia
+
+Generyczny edytor zdjec produktowych. Klient pisze **krotki, naturalny opis zmiany** (po polsku lub angielsku) - skill przekazuje to do AI. **Zero sztywnych parametrow** typu `--posts/--rails`. Im krotszy i bardziej konkretny prompt, tym lepszy wynik z Nano Banana 2.
 
 ## Kiedy uzywac
 
-Uzytkownik prosi o wygenerowanie wizualizacji balustrady na bazie wlasnego zdjecia. Triggery: "balustrada", "balkon", "wstaw balustrade do tego zdjecia", "wygeneruj warianty balustrad", "slupki + rurki poprzeczne".
+Uzytkownik chce edytowac zdjecie produktu - zmienic detal, kolor, liczbe elementow, dodac/usunac cos, zlozyc kompozycje z kilku zdjec. Triggery: "balustrada", "porecz", "klamka", "ogrodzenie", "brama", "zmien na zdjeciu", "wstaw produkt do tego zdjecia", "wygeneruj warianty", "edytuj to zdjecie".
 
 ## Co skill robi
 
-Bierze **zdjecie referencyjne uzytkownika** (budynek/elewacja z balkonem) i wstawia/zamienia balustrade na nowa wg parametrow:
-- **N slupkow** (typowo 3-10)
-- **M rurek poprzecznych** (typowo 2-6)
-- **Kolor** (antracyt, czarny, bialy, srebrny, rdzawy lub custom hex)
+1. Bierze zdjecie(a) referencyjne uzytkownika
+2. Bierze krotki opis zmiany (sformulowany przez Claude na podstawie tego co user pisze/pokazuje)
+3. Uploaduje zdjecia do S3/MinIO uzytkownika (Kie.ai wymaga publicznego URL)
+4. Wywoluje Nano Banana 2 z minimalnym promptem ("{user_prompt} Keep the rest of the photo unchanged.")
+5. Zapisuje wynik lokalnie
 
 Tryby:
-- **edit** - 1 zdjecie referencyjne (np. budynek z istniejaca balustrada do podmiany)
-- **compose** - 2+ zdjec (np. budynek + osobna referencja balustrady)
-- **batch** - wiele wariantow z tego samego zdjecia (jednym poleceniem)
+- **edit** - 1 zdjecie + prompt → edycja
+- **compose** - 2+ zdjec (1. = scena, kolejne = referencje stylu) + prompt → kompozycja
+- **batch** - wiele promptow na tym samym zdjeciu(ach) → seria wariantow
 
-Skill jest zoptymalizowany pod **wysoka jakosc** i **powtarzalnosc detalu konstrukcyjnego** (uchwyty przelotowe, prawidlowe slupki, brak gubienia elementow).
+## Jak rozmawiac z uzytkownikiem (workflow Claude)
 
-## Wazne: zdjecia referencyjne
-
-Skrypt uploaduje zdjecia do **S3/MinIO uzytkownika** (skonfigurowane w `.env`) bo Kie.ai API wymaga publicznego URL. Bez S3/MinIO skill nie zadziala.
-
-## Workflow dla Claude
-
-1. **Sprawdz czy uzytkownik podal zdjecia**:
-   - Brak zdjec → poinformuj ze skill wymaga zdjecia referencyjnego, popros o sciezke
+1. **Sprawdz co user dal**:
+   - Brak zdjec → popros o sciezke do zdjecia referencyjnego
    - 1 zdjecie → tryb `edit`
    - 2+ zdjec → tryb `compose`
+   - Mowi "warianty", "kazdy kolor", "porownanie" → tryb `batch`
 
-2. **Zbierz parametry**:
-   - Liczba slupkow (jedna wartosc dla edit/compose, lista `5,6,7` dla batch)
-   - Liczba rurek poprzecznych (jedna wartosc lub lista)
-   - Kolor (domyslnie: antracyt)
-   - Czy batch? (kiedy uzytkownik mowi "wszystkie warianty", "kazda kombinacja")
-   - Format/proporcje (domyslnie: `auto` - dopasowane do zdjecia)
-   - Rozdzielczosc (domyslnie: 2K)
+2. **Zapytaj co dokladnie chce zmienic**, jezeli to nie jest jasne ze zdjecia/wiadomosci. Przyklady dobrych pytan:
+   - "Co konkretnie ma byc inaczej na tym zdjeciu?"
+   - "Jaki kolor / ile elementow / jaki ksztalt?"
+   - "To ma byc edycja istniejacego produktu, czy doklejamy nowy?"
 
-3. **Skrypt sam zbuduje prompt** wg zasad z [prompting-guide.md](prompting-guide.md):
-   - SUBJECT FIRST - balustrada jako pierwszy element
-   - Liczby slownie + cyfrowo ("six (6) vertical posts")
-   - Wzmocnienia `(through-bolt connections:1.4)`
-   - Pozytywne negatywy ("every post fully visible")
-   - Instrukcja aby zachowac scene oryginalnego zdjecia
+3. **Sformuluj krotki, konkretny prompt po angielsku** - 1-2 zdania max. Zasady:
+   - Mow co zmienic, **nie** opisuj calej sceny od zera
+   - Konkretne liczby gdy potrzeba: "Change 4 horizontal rails to 3 horizontal rails"
+   - Konkretne kolory: "Change the handle color to matte black"
+   - Bez ozdobnikow typu "modern minimalist", "high quality" itd.
+   - Jezeli sa ograniczenia co zachowac: "Keep the rest of the photo unchanged" zostanie dodane automatycznie przez skrypt
+
+   **Przyklady dobrych promptow:**
+   - "Reduce the number of horizontal cross-rails on the balcony railing from 4 to 3."
+   - "Change the door handle color to satin nickel."
+   - "Replace the existing fence panels with vertical slat panels."
+   - "Make the railing posts thicker (square 60x60mm profile instead of 40x40mm)."
+
+   **Zle prompty (zbyt dlugie, opisuja cala scene):**
+   - "PRESERVE FROM REFERENCE IMAGE: keep the entire building... CHANGE: replace the railing with a modern minimalist..."
+   - "Generate a high-quality, professional product visualization of an anthracite steel balustrade with 6 evenly spaced posts..."
 
 4. **Wywolaj skrypt**:
 
    **Edit (1 zdjecie):**
    ```bash
    python3 {SKILL_DIR}/scripts/kie_balustrade.py edit \
-     --posts 6 --rails 4 --color antracyt \
-     --image input.jpg \
-     --output output/balustrada-6x4.jpg \
-     --resolution 2K
+     --prompt "Reduce the number of horizontal rails from 4 to 3." \
+     --image /path/to/input.jpg \
+     --output /path/to/output/result.jpg
    ```
 
    **Compose (2+ zdjec):**
    ```bash
    python3 {SKILL_DIR}/scripts/kie_balustrade.py compose \
-     --posts 6 --rails 4 --color antracyt \
-     --image building.jpg --image railing-ref.jpg \
-     --output output/balustrada-6x4.jpg
+     --prompt "Install this railing style on the balcony in the first image." \
+     --image scene.jpg --image railing-reference.jpg \
+     --output /path/to/output/result.jpg
    ```
 
-   **Batch (jedno zdjecie, wiele wariantow):**
+   **Batch (kilka promptow na tym samym zdjeciu):**
    ```bash
    python3 {SKILL_DIR}/scripts/kie_balustrade.py batch \
-     --posts 5,6,7 --rails 3,4,5 --color antracyt \
+     --prompt "Change railing color to anthracite." \
+     --prompt "Change railing color to white." \
+     --prompt "Change railing color to corten rust." \
      --image input.jpg \
-     --output-dir output/ \
-     --resolution 2K
+     --output-dir /path/to/output/
    ```
 
-   **Batch z compose (kilka zdjec ref + wiele wariantow):**
+   **Batch z plikiem promptow (1 prompt per linia):**
    ```bash
    python3 {SKILL_DIR}/scripts/kie_balustrade.py batch \
-     --posts 5,6,7 --rails 3,4,5 \
-     --image building.jpg --image railing-ref.jpg \
-     --output-dir output/
+     --prompts-file /path/to/prompts.txt \
+     --image input.jpg \
+     --output-dir /path/to/output/
    ```
 
-5. **Pokaz wyniki** - liczba sukcesow/niepowodzen + scieżki do plikow
+5. **Pokaz wyniki** - sciezki do plikow + ile sie udalo / ile sie sypnelo. Jesli wynik jest slaby, zaproponuj retry z innym promptem (czesto wystarczy inne sformulowanie albo dodanie konkretnej liczby).
 
 ## Parametry CLI
 
-| Parametr | Opcje | Domyslnie |
-|----------|-------|-----------|
-| `--posts` | int (single) lub lista `5,6,7` (batch) | wymagany |
-| `--rails` | int (single) lub lista `3,4,5` (batch) | wymagany |
-| `--color` | antracyt, czarny, bialy, srebrny, rdzawy, #XXXXXX | antracyt |
-| `--image` | sciezka pliku (uzyj wielokrotnie dla compose) | wymagany |
-| `--extra` | dodatkowe instrukcje dla AI | - |
-| `--ratio` | 1:1, 4:3, 16:9, 9:16, 3:2, 2:3, auto | auto |
-| `--resolution` | 1K, 2K, 4K | 2K |
-| `--format` | jpg, png | jpg |
+| Parametr | Tryby | Opis |
+|----------|-------|------|
+| `--prompt` | edit/compose/batch | Krotki opis zmiany (batch: uzyj wielokrotnie) |
+| `--prompts-file` | batch | Plik txt z promptami (1 linia = 1 prompt) |
+| `--image` | edit/compose/batch | Sciezka do zdjecia (compose/batch: uzyj wielokrotnie) |
+| `--output` | edit/compose | Sciezka pliku wynikowego |
+| `--output-dir` | batch | Katalog na wyniki |
+| `--ratio` | wszystkie | 1:1, 4:3, 16:9, 9:16, 3:2, 2:3, auto (domyslnie auto) |
+| `--resolution` | wszystkie | 1K, 2K, 4K (domyslnie 2K) |
+| `--format` | wszystkie | jpg, png (domyslnie jpg) |
+| `--seed` | wszystkie | int dla powtarzalnosci, brak = losowy |
 
-## Jak rozumiec uzytkownika
+## Tipy do promptow (dla Claude)
 
-**Przyklad 1:** "Tu masz zdjecie willi, wstaw balustrade na 6 slupkow z 4 rurkami"
-→ `edit` z 1 zdjeciem, `--posts 6 --rails 4`
-
-**Przyklad 2:** "Mam zdjecie domu i osobno zdjecie balustrady jaka chce, polacz to"
-→ `compose` z 2 zdjeciami
-
-**Przyklad 3:** "Z tego zdjecia daj mi wszystkie kombinacje 5/6/7 slupkow i 3/4/5 rurek"
-→ `batch` z 1 zdjeciem (9 wariantow)
-
-**Przyklad 4:** "Z tego budynku zrob 9 wariantow w czarnym i 9 w antracycie"
-→ 2x `batch` (po jednym na kolor) - poinformuj ze batch nie obsluguje wielu kolorow naraz
+- **Liczby pisz cyfrowo I podawaj kontekst**: "from 4 to 3" jest lepsze niz "set to 3"
+- **Kolory konkretnie**: "satin black", "matte anthracite RAL 7016", "polished chrome" - nie "ciemny"
+- **Material**: "stainless steel", "powder-coated aluminum", "tempered glass" - jezeli istotne
+- **Pozycja**: "left railing only", "the bottom horizontal rail" - jezeli zmiana dotyczy konkretnego fragmentu
+- **Negacje dzialaja srednio**: zamiast "no extra rails", pisz "exactly 3 rails total"
+- **Jezeli AI gubi liczby** (czeste przy malych elementach na zdjeciu): w prompcie podaj kontekst "the railing currently has 4 rails - reduce to 3"
 
 ## Konfiguracja `.env`
 
-Skrypt szuka `.env` w katalogu skilla. Wymagane zmienne:
+Skrypt szuka `.env` najpierw w katalogu skilla, potem w `~/.claude/.env`. Wymagane zmienne:
 
 ```
 KIE_API_KEY=...
@@ -131,7 +134,7 @@ S3_REGION=us-east-1
 S3_PUBLIC_URL=...    # opcjonalne, jesli inny niz endpoint
 ```
 
-Jesli `.env` nie istnieje albo brakuje zmiennych - poinformuj uzytkownika i wskaz [README.md](README.md).
+Bucket musi mieć policy `public-read` na GetObject (Kie.ai pobiera plik z URLa) - w przeciwnym wypadku dostaniesz 403.
 
 ## Obsluga bledow
 
@@ -139,12 +142,11 @@ Jesli `.env` nie istnieje albo brakuje zmiennych - poinformuj uzytkownika i wska
 |-----|-----------|-------|
 | 401 | Zly KIE_API_KEY | Sprawdz `.env` |
 | 402 | Brak srodkow na Kie.ai | Doladuj na kie.ai |
+| 403 (przy generacji) | Plik na S3 nieosiagalny publicznie | Ustaw bucket policy public-read |
 | 422 | Blad walidacji parametrow | Sprawdz proporcje/rozdzielczosc |
 | 429 | Rate limit | Poczekaj 30s |
 | Brak konfiguracji S3 | Brak credentials w `.env` | Uzupelnij `.env` wg `.env.example` |
 
 ## Referencje
 
-- Zasady promptow: [prompting-guide.md](prompting-guide.md)
-- Style sceny (notatki): [balustrade-recipes.md](balustrade-recipes.md)
 - Instalacja i konfiguracja: [README.md](README.md)

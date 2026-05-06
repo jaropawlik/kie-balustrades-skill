@@ -1,25 +1,24 @@
 # Kie Balustrades Skill
 
-Skill dla Claude Code do generowania wysokiej jakosci wizualizacji balustrad balkonowych przez API Kie.ai (model Google Nano Banana 2).
+Skill dla Claude Code do edycji zdjec produktow z branzy slusarsko-stalowej (balustrady, porecze, klamki, ogrodzenia, bramy itd.) przez API Kie.ai.
 
-**Pracuje na zdjeciach referencyjnych uzytkownika** - bierzesz zdjecie budynku/elewacji, skill wstawia/zamienia balustrade na nowa wg parametrow.
+**Filozofia:** generyczny edytor - bierzesz zdjecie produktu i piszesz krotki, naturalny opis zmiany ("zmniejsz liczbe rurek z 4 do 3", "zmien kolor klamki na czarny", "wstaw te porecz na te schody"). Skill przekazuje to do AI i zwraca edytowane zdjecie.
 
-Parametryzuje:
-- liczbe slupkow (np. 5, 6, 7)
-- liczbe rurek poprzecznych (np. 3, 4, 5)
-- kolor (antracyt, czarny, bialy, srebrny, rdzawy lub custom hex)
+Modele:
+- `nano-banana-pro` (default) - lepsza jakosc, drozszy
+- `nano-banana-2` - tansza alternatywa do iteracji
 
 Tryby:
-- **edit** - 1 zdjecie referencyjne (najczestsze)
-- **compose** - 2+ zdjec (np. budynek + osobna referencja balustrady)
-- **batch** - wiele wariantow z tego samego zdjecia jednym poleceniem (np. 9 kombinacji)
+- **edit** - 1 zdjecie + prompt
+- **compose** - 2+ zdjec (1. = scena, kolejne = referencje stylu) + prompt
+- **batch** - wiele promptow na tym samym zdjeciu(ach) - dostajesz seria wariantow
 
 ---
 
 ## Wymagania
 
 - **Konto Kie.ai** z API key i zasilonym kontem (https://kie.ai)
-- **S3 lub MinIO** - dowolny S3-compatible storage z Twoimi credentials (zdjecia musza miec publiczny URL dla Kie.ai API)
+- **S3 lub MinIO** - dowolny S3-compatible storage (Kie.ai pobiera zdjecia z publicznego URL)
 - **Python 3.9+**
 
 ---
@@ -34,30 +33,31 @@ git clone <URL_REPO> kie-balustrades
 cd kie-balustrades
 ```
 
-### 2. Zainstaluj zaleznosci Pythona
+### 2. Zainstaluj zaleznosci
 
 ```bash
 pip3 install -r requirements.txt
 ```
 
-### 3. Zaloz konto Kie.ai i pobierz API key
+### 3. Konto Kie.ai
 
-1. Wejdz na https://kie.ai
-2. Zaloz konto (mozna przez Google)
-3. Doladuj konto - kazda generacja kosztuje punkty (orientacyjnie 0.05-0.20 USD per obrazek 2K)
-4. Wejdz w **API Keys** i wygeneruj nowy klucz
+1. Wejdz na https://kie.ai, zaloz konto
+2. Doladuj konto - kazda generacja kosztuje punkty
+3. W **API Keys** wygeneruj klucz
 
-### 4. Przygotuj S3/MinIO
+### 4. S3/MinIO
 
-Kie.ai API potrzebuje **publicznego URL** zdjecia referencyjnego. Skrypt uploaduje na Twoje S3/MinIO i przekazuje URL.
+Kie.ai potrzebuje **publicznego URL** zdjecia. Skrypt uploaduje na Twoje S3/MinIO i przekazuje URL do API.
 
 Wymagane:
 - Endpoint S3 (np. `https://minio.twojadomena.com` albo `https://s3.eu-central-1.amazonaws.com`)
 - Access key + Secret key
-- Bucket z **publicznym dostepem do odczytu** (lub presigned URLs - skrypt uzywa direct URL)
+- Bucket z **public-read na GetObject**
 
-> **MinIO:** ustaw bucket policy na `public read` dla prefixu `kie-balustrades/*`
-> **AWS S3:** wlacz public access dla bucketa lub uzyj CloudFront przed nim
+> **MinIO:** ustaw bucket policy `public-read` (przez `mc anonymous set download`, panel webowy, albo programowo przez boto3).
+> **AWS S3:** wlacz public access dla bucketa lub uzyj CloudFront przed nim.
+
+Bez public-read dostaniesz `403 Forbidden` przy generacji.
 
 ### 5. Skonfiguruj `.env`
 
@@ -65,7 +65,7 @@ Wymagane:
 cp .env.example .env
 ```
 
-Otworz `.env` w edytorze i wypelnij:
+Wypelnij:
 
 ```
 KIE_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx
@@ -78,16 +78,16 @@ S3_REGION=us-east-1
 
 Opcjonalnie `S3_PUBLIC_URL` - jesli URL publicznego dostepu jest inny niz endpoint (np. CDN przed MinIO).
 
+Skrypt szuka `.env` najpierw w katalogu skilla, potem w `~/.claude/.env` (fallback dla globalnej konfiguracji).
+
 ### 6. Test
 
 ```bash
 python3 scripts/kie_balustrade.py edit \
-  --posts 6 --rails 4 \
-  --image /sciezka/do/twojego/zdjecia.jpg \
+  --prompt "Change the railing color to satin black." \
+  --image /sciezka/do/zdjecia.jpg \
   --output output/test.jpg
 ```
-
-Jesli wszystko dziala - dostaniesz `output/test.jpg`.
 
 ---
 
@@ -96,147 +96,145 @@ Jesli wszystko dziala - dostaniesz `output/test.jpg`.
 Po instalacji skill dziala automatycznie. Wystarczy napisac do Claude:
 
 ```
-Tu masz zdjecie willi /path/to/willa.jpg, wstaw balustrade na 6 slupkow
-z 4 rurkami poprzecznymi w antracycie
+Tu masz zdjecie balkonu /path/to/balkon.jpg, zmniejsz liczbe poprzecznych rurek z 4 do 3
 ```
 
-albo batch:
-
 ```
-Z tego zdjecia /path/to/budynek.jpg potrzebuje wszystkie warianty:
-5, 6, 7 slupkow i 3, 4, 5 rurek poprzecznych, antracyt
+Mam zdjecie domu i osobno zdjecie balustrady. Wstaw te balustrade na ten balkon.
 ```
 
-Claude zrozumie i odpali skrypt.
+```
+Z tego zdjecia /path/to/produkt.jpg zrob 4 warianty kolorystyczne: antracyt, czarny, bialy, rdzawy
+```
+
+Claude zrozumie kontekst, sformuluje krotki prompt po angielsku, odpali skrypt.
+
+**Dobre prompty (krotkie, konkretne):**
+- "Reduce the number of horizontal cross-rails from 4 to 3."
+- "Change the door handle color to satin nickel."
+- "Replace the existing fence panels with vertical slat panels."
+
+**Zle prompty (zbyt dlugie, opisuja cala scene):**
+- "Generate a high-quality, professional product visualization of an anthracite steel balustrade with 6 evenly spaced posts..."
 
 ---
 
-## Uzycie z linii komend (bez Claude)
+## Uzycie z linii komend
 
-### Edit - 1 zdjecie
+### Edit - 1 zdjecie + prompt
 
 ```bash
 python3 scripts/kie_balustrade.py edit \
-  --posts 6 --rails 4 --color antracyt \
+  --prompt "Change the railing color to matte black." \
   --image input.jpg \
-  --output output/balustrada-6x4.jpg \
-  --ratio auto \
+  --output output/result.jpg \
   --resolution 2K
 ```
 
 ### Compose - 2+ zdjec referencyjnych
 
+Pierwsze zdjecie = glowna scena, kolejne = referencje stylu (np. balustrada do skopiowania).
+
 ```bash
 python3 scripts/kie_balustrade.py compose \
-  --posts 6 --rails 4 --color czarny \
-  --image building.jpg \
-  --image railing-style-ref.jpg \
-  --output output/balustrada.jpg
+  --prompt "Install this railing style on the balcony in the first image." \
+  --image scena.jpg \
+  --image railing-reference.jpg \
+  --output output/result.jpg
 ```
 
-### Batch - wszystkie kombinacje z jednego zdjecia
+### Batch - wiele promptow na jednym zdjeciu
 
 ```bash
 python3 scripts/kie_balustrade.py batch \
-  --posts 5,6,7 --rails 3,4,5 --color antracyt \
+  --prompt "Change railing color to anthracite." \
+  --prompt "Change railing color to white." \
+  --prompt "Change railing color to corten rust." \
   --image input.jpg \
-  --output-dir output/ \
-  --resolution 2K
+  --output-dir output/
 ```
 
-To wygeneruje 9 plikow w `output/`:
-```
-balustrada_5x3_antracyt_20260506_141523.jpg
-balustrada_5x4_antracyt_20260506_141523.jpg
-balustrada_5x5_antracyt_20260506_141523.jpg
-balustrada_6x3_antracyt_20260506_141523.jpg
-balustrada_6x4_antracyt_20260506_141523.jpg
-balustrada_6x5_antracyt_20260506_141523.jpg
-balustrada_7x3_antracyt_20260506_141523.jpg
-balustrada_7x4_antracyt_20260506_141523.jpg
-balustrada_7x5_antracyt_20260506_141523.jpg
+albo z pliku:
+
+```bash
+python3 scripts/kie_balustrade.py batch \
+  --prompts-file prompts.txt \
+  --image input.jpg \
+  --output-dir output/
 ```
 
-> **Optymalizacja:** Batch uploaduje zdjecia tylko raz (na poczatku), potem reuzytkuje URL dla wszystkich wariantow - oszczedza czas i transfer.
+`prompts.txt` - 1 prompt per linia, linie zaczynajace od `#` ignorowane.
 
-### Dodatkowe instrukcje (`--extra`)
+### Wybor modelu
 
 ```bash
 python3 scripts/kie_balustrade.py edit \
-  --posts 6 --rails 4 \
+  --prompt "..." \
   --image input.jpg --output out.jpg \
-  --extra "balustrada w stylu nowoczesnym, slupki w przekroju kwadratowym 40x40mm"
+  --model nano-banana-2     # tanszy, do iteracji
 ```
+
+Default: `nano-banana-pro` (lepsza jakosc, drozszy).
 
 ---
 
 ## Wszystkie parametry
 
-| Parametr | Opcje | Domyslnie |
-|----------|-------|-----------|
-| `--posts` | int (edit/compose) lub lista `5,6,7` (batch) | wymagany |
-| `--rails` | int lub lista `3,4,5` | wymagany |
-| `--image` | sciezka (uzyj wielokrotnie dla compose) | wymagany |
-| `--color` | `antracyt` / `czarny` / `bialy` / `srebrny` / `rdzawy` / `#XXXXXX` | `antracyt` |
-| `--extra` | string z dodatkowymi instrukcjami | - |
-| `--ratio` | `1:1` / `4:3` / `3:2` / `16:9` / `9:16` / `2:3` / `3:4` / `auto` | `auto` |
-| `--resolution` | `1K` / `2K` / `4K` | `2K` |
-| `--format` | `jpg` / `png` | `jpg` |
-| `--output` (edit/compose) | sciezka pliku | wymagany |
-| `--output-dir` (batch) | katalog | wymagany |
+| Parametr | Tryby | Opis |
+|----------|-------|------|
+| `--prompt` | edit/compose/batch | Krotki opis zmiany. W batch uzyj wielokrotnie. |
+| `--prompts-file` | batch | Plik tekstowy: 1 prompt per linia |
+| `--image` | edit/compose/batch | Sciezka pliku. compose/batch: uzyj wielokrotnie. |
+| `--output` | edit/compose | Sciezka pliku wynikowego |
+| `--output-dir` | batch | Katalog na wyniki |
+| `--model` | wszystkie | `nano-banana-pro` (default) lub `nano-banana-2` |
+| `--ratio` | wszystkie | `1:1` / `4:3` / `3:2` / `16:9` / `9:16` / `2:3` / `3:4` / `auto` (default) |
+| `--resolution` | wszystkie | `1K` / `2K` (default) / `4K` |
+| `--format` | wszystkie | `jpg` (default) / `png` |
+| `--seed` | wszystkie | int dla powtarzalnosci, brak = losowy |
 
 ---
 
 ## Koszt orientacyjny
 
-Cennik Kie.ai zmienia sie - sprawdz aktualny na https://kie.ai. Orientacyjnie dla Nano Banana 2:
+Cennik Kie.ai zmienia sie - sprawdz aktualny na https://kie.ai.
 
-- 1K: ~0.04 USD
-- 2K: ~0.08 USD
-- 4K: ~0.16 USD
+Orientacyjnie:
+- Nano Banana 2 (2K): ~0.08 USD per obrazek
+- Nano Banana Pro (2K): ~0.20-0.30 USD per obrazek
 
-Batch 9 wariantow w 2K = ~0.72 USD (~3 zl). Plus minimalny transfer S3.
+Pro daje zauwazalnie lepsza jakosc detalu i lepiej trzyma sie instrukcji - dla finalnych zdjec na oferty/Allegro warto. Do iteracji i szybkich testow uzyj Nano Banana 2.
 
 ---
 
 ## Troubleshooting
 
 **`Error: Brak konfiguracji S3 w .env`**
-- Sprawdz czy w `.env` sa wszystkie zmienne S3_*
+Sprawdz czy w `.env` sa wszystkie zmienne S3_*.
 
 **`Error: 401 Unauthorized`**
-- Zly `KIE_API_KEY`. Skopiuj na nowo z https://kie.ai
+Zly `KIE_API_KEY`. Skopiuj na nowo z https://kie.ai.
 
 **`Error: 402 Payment Required`**
-- Brak srodkow. Doladuj na https://kie.ai
+Brak srodkow. Doladuj na https://kie.ai.
+
+**`Generation failed: 403 Forbidden for url: ...`**
+Plik na S3 nie jest publicznie czytelny. Ustaw bucket policy `public-read` na GetObject. Otworz URL z logu w przegladarce - musi sie wyswietlic zdjecie.
 
 **`Error: 422 Validation Error`**
-- Najczestszy powod: zle proporcje/rozdzielczosc albo URL zdjecia jest niedostepny publicznie. Otworz URL z logu (`URL: https://...`) w przegladarce - musi sie wyswietlic zdjecie.
+Zle proporcje albo rozdzielczosc. Sprawdz `--ratio` i `--resolution`.
 
 **`Error: 429 Rate Limit`**
-- Za duzo zapytan. Poczekaj 30s. Batch ma 5s przerwy miedzy wariantami.
+Za duzo zapytan. Poczekaj 30s.
 
-**Generuje zla liczbe slupkow / rurek**
-- To znany problem modeli text-to-image. Skill juz uzywa najmocniejszych technik (subject-first, slowa+cyfry, wzmacnianie wagami).
-- Wygeneruj 2-3 warianty i wybierz najlepszy.
-- Sprobuj z mniej skomplikowanym tlem albo `--extra "extreme detail on railing geometry"`.
+**AI nie respektuje liczb (np. zostawia 4 rurki zamiast 3)**
+Znana slabosc obu modeli przy malych elementach na zdjeciu. Sprobuj:
+- Pro zamiast Nano 2 (`--model nano-banana-pro`)
+- Konkretny opis ktorej rzeczy sie pozbyc: "Remove the topmost horizontal rail" zamiast "reduce from 4 to 3"
+- Compose z drugim zdjeciem ktore juz ma docelowa geometrie
 
-**Generuje balustrade ale zmienia tlo**
-- W trybie `edit` skrypt instruuje "keep building exactly as in original". Jesli mimo tego zmienia, sprobuj `--ratio auto` (dopasowanie do zdjecia) i wyzsza `--resolution 4K`.
-
----
-
-## Jak to dziala (jakosc)
-
-Skill uzywa **inzynierii promptow** zoptymalizowanej pod konstrukcje balustrad:
-
-1. **Subject-first** - balustrada jako pierwszy element promptu
-2. **Liczby slownie + cyfrowo** - `"six (6) vertical posts"` (lepsze rozpoznanie liczb)
-3. **Wzmacniacze wag** - `(through-bolt connections:1.4)` na uchwytach przelotowych
-4. **Pozytywne negatywy** - zamiast "no missing posts" piszemy "every post fully visible"
-5. **Preserve scene** - w trybie `edit` instrukcja aby zachowac budynek/swiatlo z oryginalu
-
-Pelne zasady: [prompting-guide.md](prompting-guide.md)
+**Zmienia tlo zamiast tylko produkt**
+Skrypt automatycznie dodaje "Keep the rest of the photo unchanged." na koncu kazdego promptu. Jak nadal psuje tlo - sprobuj `--resolution 4K` (lepsze trzymanie detalu) albo daj wieksze, jasniejsze zdjecie.
 
 ---
 
